@@ -165,11 +165,32 @@ function ScannerView() {
             setStep("saving");
             try {
                 const supabase = getSupabase();
-                const { error } = await supabase.from("badge_mappings").upsert(
-                    { badge_code: code, luma_url: url },
-                    { onConflict: "badge_code" }
+
+                // Double-check: reject if already mapped
+                const { data: existing } = await supabase
+                    .from("badge_mappings")
+                    .select("badge_code")
+                    .eq("badge_code", code)
+                    .single();
+
+                if (existing) {
+                    setStep("error");
+                    setErrorMsg(`Badge "${code}" is already mapped to a ticket. It cannot be linked again.`);
+                    processingRef.current = false;
+                    return;
+                }
+
+                const { error } = await supabase.from("badge_mappings").insert(
+                    { badge_code: code, luma_url: url }
                 );
                 if (error) {
+                    // Handle unique constraint violation gracefully
+                    if (error.code === "23505") {
+                        setStep("error");
+                        setErrorMsg(`Badge "${code}" is already mapped to a ticket. It cannot be linked again.`);
+                        processingRef.current = false;
+                        return;
+                    }
                     setStep("error");
                     setErrorMsg(`Database error: ${error.message}`);
                     processingRef.current = false;
@@ -193,7 +214,7 @@ function ScannerView() {
     }, [badgeCode, lumaUrl, step, linkBadge]);
 
     const handleBadgeScan = useCallback(
-        (result: { rawValue: string }[]) => {
+        async (result: { rawValue: string }[]) => {
             if (stepRef.current !== "scan_badge" || processingRef.current) return;
             if (!result?.[0]?.rawValue) return;
 
@@ -206,6 +227,26 @@ function ScannerView() {
             }
 
             processingRef.current = true;
+
+            // Check if this badge is already mapped
+            try {
+                const supabase = getSupabase();
+                const { data: existing } = await supabase
+                    .from("badge_mappings")
+                    .select("badge_code")
+                    .eq("badge_code", code)
+                    .single();
+
+                if (existing) {
+                    setStep("error");
+                    setErrorMsg(`Badge "${code}" is already mapped to a ticket. It cannot be linked again.`);
+                    processingRef.current = false;
+                    return;
+                }
+            } catch {
+                // No existing mapping found — proceed normally
+            }
+
             setBadgeCode(code);
             setStep("badge_done");
 
@@ -268,8 +309,8 @@ function ScannerView() {
             <div className="px-5 pt-4 pb-2 flex items-center gap-3">
                 <div
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-mono uppercase tracking-wider transition-all duration-300 ${step === "badge_done" || scanStepNum === 2
-                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                            : "bg-violet-500/10 text-violet-400 border border-violet-500/20"
+                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                        : "bg-violet-500/10 text-violet-400 border border-violet-500/20"
                         }`}
                 >
                     {(scanStepNum > 1 || step === "badge_done") && (
@@ -282,10 +323,10 @@ function ScannerView() {
                 <div className="w-4 h-px bg-white/10" />
                 <div
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-mono uppercase tracking-wider transition-all duration-300 ${scanStepNum === 2
-                            ? step === "success" || step === "saving"
-                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                                : "bg-violet-500/10 text-violet-400 border border-violet-500/20"
-                            : "bg-white/5 text-gray-600 border border-white/5"
+                        ? step === "success" || step === "saving"
+                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                            : "bg-violet-500/10 text-violet-400 border border-violet-500/20"
+                        : "bg-white/5 text-gray-600 border border-white/5"
                         }`}
                 >
                     {step === "success" && (
