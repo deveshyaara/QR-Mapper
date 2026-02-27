@@ -1,0 +1,25 @@
+﻿Γû▓ Next.js 16.1.6 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+Γ£ô Compiled successfully in 5.2s
+  Running TypeScript ...
+  Collecting page data using 15 workers ...
+  Generating static pages using 15 workers (0/6) ...
+  Generating static pages using 15 workers (1/6) 
+  Generating static pages using 15 workers (2/6) 
+  Generating static pages using 15 workers (4/6) 
+Γ£ô Generating static pages using 15 workers (6/6) in 672.7ms
+  Finalizing page optimization ...
+
+Route (app)
+Γöî Γùï /
+Γö£ Γùï /_not-found
+Γö£ Γùï /admin/scan
+Γö£ ╞Æ /badge/[id]
+Γöö Γùï /unlinked
+
+
+Γùï  (Static)   prerendered as static content
+╞Æ  (Dynamic)  server-rendered on demand
+
