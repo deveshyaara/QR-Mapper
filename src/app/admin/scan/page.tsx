@@ -17,7 +17,6 @@ type Step =
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function extractBadgeCode(raw: string): string | null {
-    // Try full URL first
     try {
         const url = new URL(raw);
         const segments = url.pathname.split("/").filter(Boolean);
@@ -28,16 +27,103 @@ function extractBadgeCode(raw: string): string | null {
     } catch {
         // Not a valid URL — try regex fallback
     }
-    // Regex fallback for partial paths
     const match = raw.match(/\/badge\/([^/?\s]+)/);
     if (match) return match[1];
-
     return null;
 }
 
-// ─── Component ───────────────────────────────────────────────────────────────
+// ─── Password Gate ───────────────────────────────────────────────────────────
+
+function PasswordGate({ onSuccess }: { onSuccess: () => void }) {
+    const [password, setPassword] = useState("");
+    const [checking, setChecking] = useState(false);
+    const [error, setError] = useState("");
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!password.trim()) return;
+
+        setChecking(true);
+        setError("");
+
+        try {
+            const res = await fetch("/api/verify-staff", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ password: password.trim() }),
+            });
+            const data = await res.json();
+
+            if (data.ok) {
+                onSuccess();
+            } else {
+                setError(data.message || "Incorrect password");
+                setPassword("");
+            }
+        } catch {
+            setError("Network error. Please try again.");
+        } finally {
+            setChecking(false);
+        }
+    };
+
+    return (
+        <main className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center px-6">
+            <div className="max-w-sm w-full space-y-8">
+                {/* Lock icon */}
+                <div className="mx-auto w-20 h-20 rounded-full bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
+                    <svg className="w-10 h-10 text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
+                    </svg>
+                </div>
+
+                <div className="text-center space-y-2">
+                    <h1 className="text-2xl font-bold tracking-tight">Staff Access</h1>
+                    <p className="text-sm text-gray-400">Enter the staff password to continue</p>
+                </div>
+
+                <form onSubmit={handleSubmit} className="space-y-4">
+                    <input
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="Enter password"
+                        autoFocus
+                        className="w-full px-4 py-3.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder-gray-500 text-sm focus:outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30 transition-all"
+                    />
+
+                    {error && (
+                        <p className="text-red-400 text-sm text-center qr-fade-in">{error}</p>
+                    )}
+
+                    <button
+                        type="submit"
+                        disabled={checking || !password.trim()}
+                        className="w-full py-3.5 rounded-xl text-sm font-semibold bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98] transition-all duration-150"
+                    >
+                        {checking ? "Verifying…" : "Unlock Scanner"}
+                    </button>
+                </form>
+            </div>
+        </main>
+    );
+}
+
+// ─── Main Scanner Component ──────────────────────────────────────────────────
 
 export default function StaffScannerPage() {
+    const [authenticated, setAuthenticated] = useState(false);
+
+    if (!authenticated) {
+        return <PasswordGate onSuccess={() => setAuthenticated(true)} />;
+    }
+
+    return <ScannerView />;
+}
+
+// ─── Scanner View ────────────────────────────────────────────────────────────
+
+function ScannerView() {
     const [step, setStep] = useState<Step>("scan_badge");
     const [badgeCode, setBadgeCode] = useState("");
     const [lumaUrl, setLumaUrl] = useState("");
@@ -50,22 +136,11 @@ export default function StaffScannerPage() {
     const stepRef = useRef<Step>("scan_badge");
     const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
-    // Keep stepRef in sync
-    useEffect(() => {
-        stepRef.current = step;
-    }, [step]);
+    useEffect(() => { stepRef.current = step; }, [step]);
+    useEffect(() => { return () => { timersRef.current.forEach(clearTimeout); }; }, []);
 
-    // Cleanup timers on unmount
-    useEffect(() => {
-        return () => {
-            timersRef.current.forEach(clearTimeout);
-        };
-    }, []);
-
-    // Helper to schedule a timeout that gets cleaned up on unmount
     const safeTimeout = useCallback((fn: () => void, ms: number) => {
         const id = setTimeout(() => {
-            // Remove from tracked timers
             timersRef.current = timersRef.current.filter((t) => t !== id);
             fn();
         }, ms);
@@ -73,12 +148,9 @@ export default function StaffScannerPage() {
         return id;
     }, []);
 
-    // ── Reset everything for next attendee ──
     const resetState = useCallback(() => {
-        // Clear any pending timers
         timersRef.current.forEach(clearTimeout);
         timersRef.current = [];
-
         setStep("scan_badge");
         setBadgeCode("");
         setLumaUrl("");
@@ -88,49 +160,40 @@ export default function StaffScannerPage() {
         processingRef.current = false;
     }, []);
 
-    // ── Upsert to Supabase ──
     const linkBadge = useCallback(
         async (code: string, url: string) => {
             setStep("saving");
-
             try {
                 const supabase = getSupabase();
                 const { error } = await supabase.from("badge_mappings").upsert(
                     { badge_code: code, luma_url: url },
                     { onConflict: "badge_code" }
                 );
-
                 if (error) {
                     setStep("error");
                     setErrorMsg(`Database error: ${error.message}`);
                     processingRef.current = false;
                     return;
                 }
-
                 setStep("success");
                 safeTimeout(resetState, 3000);
             } catch (err) {
                 setStep("error");
-                setErrorMsg(
-                    err instanceof Error ? err.message : "Failed to save. Try again."
-                );
+                setErrorMsg(err instanceof Error ? err.message : "Failed to save. Try again.");
                 processingRef.current = false;
             }
         },
         [resetState, safeTimeout]
     );
 
-    // ── Trigger upsert when ticket URL is captured ──
     useEffect(() => {
         if (badgeCode && lumaUrl && step === "scan_luma") {
             linkBadge(badgeCode, lumaUrl);
         }
     }, [badgeCode, lumaUrl, step, linkBadge]);
 
-    // ── Badge scan handler ──
     const handleBadgeScan = useCallback(
         (result: { rawValue: string }[]) => {
-            // Guard: only process in the correct step, and only once
             if (stepRef.current !== "scan_badge" || processingRef.current) return;
             if (!result?.[0]?.rawValue) return;
 
@@ -146,7 +209,6 @@ export default function StaffScannerPage() {
             setBadgeCode(code);
             setStep("badge_done");
 
-            // After 2s acknowledgement, advance to ticket scan
             safeTimeout(() => {
                 setStep("scan_luma");
                 setScannerKey((k) => k + 1);
@@ -156,15 +218,13 @@ export default function StaffScannerPage() {
         [safeTimeout]
     );
 
-    // ── QR Ticket scan handler ──
     const handleLumaScan = useCallback(
         (result: { rawValue: string }[]) => {
-            // Guard: only process in the correct step, and only once
             if (stepRef.current !== "scan_luma" || processingRef.current) return;
             if (!result?.[0]?.rawValue) return;
 
             const raw = result[0].rawValue.trim();
-            if (!raw) return; // ignore empty scans
+            if (!raw) return;
 
             processingRef.current = true;
             setLumaUrl(raw);
@@ -172,29 +232,20 @@ export default function StaffScannerPage() {
         []
     );
 
-    // ── Camera error handler ──
     const handleCameraError = useCallback((error: unknown) => {
-        setCameraError(
-            error instanceof Error ? error.message : "Camera access denied."
-        );
+        setCameraError(error instanceof Error ? error.message : "Camera access denied.");
     }, []);
 
-    // ── Which scan step are we on? ──
-    const scanStepNum =
-        step === "scan_badge" || step === "badge_done" ? 1 : 2;
+    const scanStepNum = step === "scan_badge" || step === "badge_done" ? 1 : 2;
     const progressWidth =
-        step === "scan_badge"
-            ? "25%"
-            : step === "badge_done"
-                ? "50%"
-                : step === "scan_luma"
-                    ? "75%"
+        step === "scan_badge" ? "25%"
+            : step === "badge_done" ? "50%"
+                : step === "scan_luma" ? "75%"
                     : "100%";
 
-    // ═══════════════════════════════════════════════════════════════════════════
     return (
         <main className="min-h-screen bg-[#0a0a0a] text-white flex flex-col">
-            {/* ── Header ── */}
+            {/* Header */}
             <header className="border-b border-white/5 px-5 py-4 flex items-center justify-between">
                 <div>
                     <h1 className="text-lg font-semibold tracking-tight">QR Mapper</h1>
@@ -205,7 +256,7 @@ export default function StaffScannerPage() {
                 </span>
             </header>
 
-            {/* ── Progress bar ── */}
+            {/* Progress bar */}
             <div className="w-full h-1 bg-white/5">
                 <div
                     className="h-full bg-gradient-to-r from-violet-500 to-fuchsia-500 transition-all duration-700 ease-out"
@@ -213,12 +264,12 @@ export default function StaffScannerPage() {
                 />
             </div>
 
-            {/* ── Step pills ── */}
+            {/* Step pills */}
             <div className="px-5 pt-4 pb-2 flex items-center gap-3">
                 <div
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-mono uppercase tracking-wider transition-all duration-300 ${step === "badge_done" || scanStepNum === 2
-                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                        : "bg-violet-500/10 text-violet-400 border border-violet-500/20"
+                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                            : "bg-violet-500/10 text-violet-400 border border-violet-500/20"
                         }`}
                 >
                     {(scanStepNum > 1 || step === "badge_done") && (
@@ -231,10 +282,10 @@ export default function StaffScannerPage() {
                 <div className="w-4 h-px bg-white/10" />
                 <div
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-mono uppercase tracking-wider transition-all duration-300 ${scanStepNum === 2
-                        ? step === "success" || step === "saving"
-                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                            : "bg-violet-500/10 text-violet-400 border border-violet-500/20"
-                        : "bg-white/5 text-gray-600 border border-white/5"
+                            ? step === "success" || step === "saving"
+                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                : "bg-violet-500/10 text-violet-400 border border-violet-500/20"
+                            : "bg-white/5 text-gray-600 border border-white/5"
                         }`}
                 >
                     {step === "success" && (
@@ -246,16 +297,14 @@ export default function StaffScannerPage() {
                 </div>
             </div>
 
-            {/* ── Main content area ── */}
+            {/* Main content */}
             <div className="flex-1 px-5 pb-5 flex flex-col gap-4">
 
-                {/* ═══════ SCAN BADGE ═══════ */}
+                {/* SCAN BADGE */}
                 {step === "scan_badge" && (
                     <>
                         <div className="space-y-1 py-2">
-                            <h2 className="text-xl font-bold tracking-tight">
-                                Scan Badge QR
-                            </h2>
+                            <h2 className="text-xl font-bold tracking-tight">Scan Badge QR</h2>
                             <p className="text-sm text-gray-400">
                                 Point the camera at the attendee&apos;s <strong className="text-gray-300">printed badge</strong>.
                             </p>
@@ -265,12 +314,7 @@ export default function StaffScannerPage() {
                                 <CameraErrorView error={cameraError} onRetry={() => { setCameraError(""); setScannerKey((k) => k + 1); }} />
                             ) : (
                                 <>
-                                    <Scanner
-                                        key={scannerKey}
-                                        onScan={handleBadgeScan}
-                                        onError={handleCameraError}
-                                        formats={["qr_code"]}
-                                        sound={false}
+                                    <Scanner key={scannerKey} onScan={handleBadgeScan} onError={handleCameraError} formats={["qr_code"]} sound={false}
                                         styles={{ container: { width: "100%", height: "100%" }, video: { objectFit: "cover", width: "100%", height: "100%" } }}
                                     />
                                     <ScanOverlay color="violet" />
@@ -280,7 +324,7 @@ export default function StaffScannerPage() {
                     </>
                 )}
 
-                {/* ═══════ BADGE DONE ACKNOWLEDGEMENT ═══════ */}
+                {/* BADGE DONE */}
                 {step === "badge_done" && (
                     <div className="flex-1 flex flex-col items-center justify-center gap-6 py-10 qr-fade-in">
                         <div className="w-20 h-20 rounded-full bg-emerald-500/10 border-2 border-emerald-500/30 flex items-center justify-center qr-scale-in">
@@ -303,7 +347,7 @@ export default function StaffScannerPage() {
                     </div>
                 )}
 
-                {/* ═══════ SCAN LUMA ═══════ */}
+                {/* SCAN TICKET */}
                 {step === "scan_luma" && (
                     <>
                         <div className="space-y-1 py-2">
@@ -312,9 +356,7 @@ export default function StaffScannerPage() {
                                     ✓ Badge: {badgeCode}
                                 </span>
                             </div>
-                            <h2 className="text-xl font-bold tracking-tight">
-                                Now Scan QR Ticket
-                            </h2>
+                            <h2 className="text-xl font-bold tracking-tight">Now Scan QR Ticket</h2>
                             <p className="text-sm text-gray-400">
                                 Scan the attendee&apos;s <strong className="text-gray-300">QR ticket</strong> on their phone.
                             </p>
@@ -324,12 +366,7 @@ export default function StaffScannerPage() {
                                 <CameraErrorView error={cameraError} onRetry={() => { setCameraError(""); setScannerKey((k) => k + 1); }} />
                             ) : (
                                 <>
-                                    <Scanner
-                                        key={scannerKey}
-                                        onScan={handleLumaScan}
-                                        onError={handleCameraError}
-                                        formats={["qr_code"]}
-                                        sound={false}
+                                    <Scanner key={scannerKey} onScan={handleLumaScan} onError={handleCameraError} formats={["qr_code"]} sound={false}
                                         styles={{ container: { width: "100%", height: "100%" }, video: { objectFit: "cover", width: "100%", height: "100%" } }}
                                     />
                                     <ScanOverlay color="fuchsia" />
@@ -339,7 +376,7 @@ export default function StaffScannerPage() {
                     </>
                 )}
 
-                {/* ═══════ SAVING ═══════ */}
+                {/* SAVING */}
                 {step === "saving" && (
                     <div className="flex-1 flex flex-col items-center justify-center gap-6 py-10">
                         <div className="w-16 h-16 rounded-full border-2 border-violet-500/30 border-t-violet-400 animate-spin" />
@@ -347,7 +384,7 @@ export default function StaffScannerPage() {
                     </div>
                 )}
 
-                {/* ═══════ SUCCESS ═══════ */}
+                {/* SUCCESS */}
                 {step === "success" && (
                     <div className="flex-1 flex flex-col items-center justify-center gap-6 py-10 qr-fade-in">
                         <div className="w-24 h-24 rounded-full bg-emerald-500/10 border-2 border-emerald-500/30 flex items-center justify-center qr-scale-in">
@@ -361,13 +398,11 @@ export default function StaffScannerPage() {
                                 Badge <span className="font-mono text-white bg-white/10 px-2 py-0.5 rounded-md">{badgeCode}</span> is now connected.
                             </p>
                         </div>
-                        <p className="text-xs text-gray-600 animate-pulse">
-                            Resetting for next attendee…
-                        </p>
+                        <p className="text-xs text-gray-600 animate-pulse">Resetting for next attendee…</p>
                     </div>
                 )}
 
-                {/* ═══════ ERROR ═══════ */}
+                {/* ERROR */}
                 {step === "error" && (
                     <div className="flex-1 flex flex-col items-center justify-center gap-6 py-10 qr-fade-in">
                         <div className="w-20 h-20 rounded-full bg-red-500/10 border-2 border-red-500/30 flex items-center justify-center">
@@ -379,21 +414,17 @@ export default function StaffScannerPage() {
                             <h2 className="text-xl font-bold text-red-400">Something Went Wrong</h2>
                             <p className="text-gray-400 text-sm max-w-xs">{errorMsg}</p>
                         </div>
-                        <button
-                            onClick={resetState}
-                            className="px-6 py-3 rounded-xl text-sm font-semibold bg-white/5 border border-white/10 hover:bg-white/10 active:scale-[0.98] transition-all duration-150"
-                        >
+                        <button onClick={resetState}
+                            className="px-6 py-3 rounded-xl text-sm font-semibold bg-white/5 border border-white/10 hover:bg-white/10 active:scale-[0.98] transition-all duration-150">
                             Try Again
                         </button>
                     </div>
                 )}
 
-                {/* ── Manual reset (visible during scanning steps) ── */}
+                {/* Reset button */}
                 {(step === "scan_badge" || step === "scan_luma") && (
-                    <button
-                        onClick={resetState}
-                        className="w-full py-3.5 rounded-xl text-sm font-semibold bg-white/5 border border-white/10 hover:bg-white/10 active:scale-[0.98] transition-all duration-150"
-                    >
+                    <button onClick={resetState}
+                        className="w-full py-3.5 rounded-xl text-sm font-semibold bg-white/5 border border-white/10 hover:bg-white/10 active:scale-[0.98] transition-all duration-150">
                         Reset &amp; Start Over
                     </button>
                 )}
@@ -434,10 +465,8 @@ function CameraErrorView({ error, onRetry }: { error: string; onRetry: () => voi
                 <p className="font-semibold text-white text-sm">Camera Not Available</p>
                 <p className="text-xs text-gray-400 mt-1">{error}</p>
             </div>
-            <button
-                onClick={onRetry}
-                className="mt-2 px-4 py-2 text-xs font-medium rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-colors"
-            >
+            <button onClick={onRetry}
+                className="mt-2 px-4 py-2 text-xs font-medium rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-colors">
                 Retry Camera
             </button>
         </div>
