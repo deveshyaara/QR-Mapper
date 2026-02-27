@@ -35,10 +35,6 @@ function extractBadgeCode(raw: string): string | null {
     return null;
 }
 
-function isLumaUrl(raw: string): boolean {
-    return raw.toLowerCase().includes("lu.ma");
-}
-
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function StaffScannerPage() {
@@ -167,13 +163,8 @@ export default function StaffScannerPage() {
             if (stepRef.current !== "scan_luma" || processingRef.current) return;
             if (!result?.[0]?.rawValue) return;
 
-            const raw = result[0].rawValue;
-            if (!isLumaUrl(raw)) {
-                processingRef.current = true;
-                setStep("error");
-                setErrorMsg("That doesn't look like a valid QR ticket. Please scan the attendee's ticket QR code.");
-                return;
-            }
+            const raw = result[0].rawValue.trim();
+            if (!raw) return; // ignore empty scans
 
             processingRef.current = true;
             setLumaUrl(raw);
