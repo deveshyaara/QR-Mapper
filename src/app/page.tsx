@@ -6,7 +6,7 @@ export default function HomePage() {
     <main className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center px-6">
       <ParticleNetwork />
 
-      <div className="relative z-10 max-w-lg w-full text-center space-y-10 pt-[55vh]">
+      <div className="relative z-10 max-w-lg w-full text-center space-y-10 pt-[20vh]">
         {/* Title */}
         <div className="space-y-3">
           <h1 className="text-4xl sm:text-5xl font-bold tracking-tight bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">
