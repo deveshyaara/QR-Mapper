@@ -1,9 +1,11 @@
 import Link from "next/link";
+import ParticleNetwork from "./components/ParticleNetwork";
 
 export default function HomePage() {
   return (
     <main className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center px-6">
-      <div className="max-w-lg w-full text-center space-y-10">
+      <ParticleNetwork />
+      <div className="relative z-10 max-w-lg w-full text-center space-y-10">
         {/* Logo / icon */}
         <div className="mx-auto w-20 h-20 rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center shadow-lg shadow-violet-500/20">
           <svg
